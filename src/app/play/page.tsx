@@ -60,6 +60,10 @@ import {
   recommendationCacheKeys,
   setRecommendationCache,
 } from '@/lib/recommendations/cache';
+import {
+  convertSubtitleFileToVttObjectUrl,
+  CUSTOM_SUBTITLE_ACCEPT,
+} from '@/lib/subtitle-converter';
 import { getTMDBImageUrl } from '@/lib/tmdb.search';
 import { DanmakuFilterConfig, EpisodeFilterConfig, SearchResult } from '@/lib/types';
 import { base58Decode, getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
@@ -114,6 +118,13 @@ interface SearchCachePayload {
   results: SearchResult[];
   query: string;
   updatedAt: number;
+}
+
+interface CustomSubtitleState {
+  name: string;
+  url: string;
+  format: string;
+  episodeIndex: number;
 }
 
 function PlayPageClient() {
@@ -1782,6 +1793,9 @@ function PlayPageClient() {
 
   const artPlayerRef = useRef<any>(null);
   const artRef = useRef<HTMLDivElement | null>(null);
+  const customSubtitleInputRef = useRef<HTMLInputElement | null>(null);
+  const customSubtitleRef = useRef<CustomSubtitleState | null>(null);
+  const currentSubtitleLabelRef = useRef<string>('关闭');
 
   // Wake Lock 相关
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -1802,6 +1816,137 @@ function PlayPageClient() {
   // -----------------------------------------------------------------------------
   // 工具函数（Utils）
   // -----------------------------------------------------------------------------
+
+  const getSubtitleStyle = () => ({
+    color: '#fff',
+    fontSize: typeof window !== 'undefined' ? localStorage.getItem('subtitleSize') || '2em' : '2em',
+  });
+
+  const revokeCustomSubtitle = () => {
+    if (customSubtitleRef.current) {
+      URL.revokeObjectURL(customSubtitleRef.current.url);
+      customSubtitleRef.current = null;
+    }
+  };
+
+  const switchSubtitle = (url: string, label: string) => {
+    if (!artPlayerRef.current) return;
+
+    artPlayerRef.current.subtitle.switch(url, {
+      name: label,
+      type: 'vtt',
+      style: getSubtitleStyle(),
+      encoding: 'utf-8',
+    });
+    artPlayerRef.current.subtitle.show = true;
+    currentSubtitleLabelRef.current = label;
+  };
+
+  const removeSubtitleSetting = () => {
+    try {
+      artPlayerRef.current?.setting.remove('subtitle-selector');
+    } catch (e) {
+      // 忽略错误，可能设置项不存在
+    }
+  };
+
+  const updateSubtitleSetting = () => {
+    if (!artPlayerRef.current) return;
+
+    const sourceSubtitles = detailRef.current?.subtitles?.[currentEpisodeIndexRef.current] || [];
+    const customSubtitle =
+      customSubtitleRef.current?.episodeIndex === currentEpisodeIndexRef.current
+        ? customSubtitleRef.current
+        : null;
+
+    removeSubtitleSetting();
+
+    const subtitleOptions = [
+      { html: '关闭', action: 'close' },
+      { html: '上传本地字幕', action: 'upload' },
+      ...sourceSubtitles.map((sub: any) => ({
+        html: sub.label,
+        action: 'switch',
+        url: sub.url,
+      })),
+      ...(customSubtitle
+        ? [
+          {
+            html: `本地：${customSubtitle.name}`,
+            action: 'switch',
+            url: customSubtitle.url,
+          },
+        ]
+        : []),
+    ];
+
+    artPlayerRef.current.setting.add({
+      name: 'subtitle-selector',
+      html: '字幕',
+      selector: subtitleOptions,
+      onSelect: function (item: any) {
+        if (!artPlayerRef.current) {
+          return currentSubtitleLabelRef.current;
+        }
+
+        if (item.action === 'close') {
+          artPlayerRef.current.subtitle.show = false;
+          currentSubtitleLabelRef.current = '关闭';
+          return item.html;
+        }
+
+        if (item.action === 'upload') {
+          customSubtitleInputRef.current?.click();
+          return currentSubtitleLabelRef.current;
+        }
+
+        if (item.url) {
+          switchSubtitle(item.url, item.html);
+          return item.html;
+        }
+
+        return currentSubtitleLabelRef.current;
+      },
+      default: currentSubtitleLabelRef.current,
+    });
+  };
+
+  const handleCustomSubtitleFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) return;
+
+    try {
+      const convertedSubtitle = await convertSubtitleFileToVttObjectUrl(file);
+      revokeCustomSubtitle();
+
+      customSubtitleRef.current = {
+        ...convertedSubtitle,
+        episodeIndex: currentEpisodeIndexRef.current,
+      };
+
+      switchSubtitle(
+        convertedSubtitle.url,
+        `本地：${convertedSubtitle.name}`
+      );
+      updateSubtitleSetting();
+      setToast({
+        message: `已加载本地字幕：${convertedSubtitle.name}`,
+        type: 'success',
+        onClose: () => setToast(null),
+      });
+    } catch (error) {
+      console.warn('[Subtitle] 自定义字幕加载失败:', error);
+      setToast({
+        message: error instanceof Error ? error.message : '字幕加载失败',
+        type: 'error',
+        onClose: () => setToast(null),
+      });
+    }
+  };
 
   // 判断剧集状态
   const getSeriesStatus = (detail: SearchResult | null): 'completed' | 'ongoing' | 'unknown' => {
@@ -2953,6 +3098,8 @@ function PlayPageClient() {
 
   // 清理播放器资源的统一函数
   const cleanupPlayer = async () => {
+    revokeCustomSubtitle();
+
     // 清除刷新定时器
     clearRefreshTimer();
 
@@ -4342,62 +4489,18 @@ function PlayPageClient() {
   useEffect(() => {
     if (!artPlayerRef.current || !detail) return;
 
+    revokeCustomSubtitle();
     const currentSubtitles = detail.subtitles?.[currentEpisodeIndex] || [];
-    const savedSubtitleSize = typeof window !== 'undefined' ? localStorage.getItem('subtitleSize') || '2em' : '2em';
 
     // 如果有字幕，更新播放器字幕
     if (currentSubtitles.length > 0) {
-      artPlayerRef.current.subtitle.switch(currentSubtitles[0].url, {
-        type: 'vtt',
-        style: {
-          color: '#fff',
-          fontSize: savedSubtitleSize,
-        },
-        encoding: 'utf-8',
-      });
-
-      // 移除旧的字幕设置，添加新的
-      try {
-        artPlayerRef.current.setting.remove('subtitle-selector');
-      } catch (e) {
-        // 忽略错误，可能设置项不存在
-      }
-
-      const subtitleOptions = [
-        { html: '关闭', url: '' },
-        ...currentSubtitles.map((sub: any) => ({
-          html: sub.label,
-          url: sub.url,
-        })),
-      ];
-
-      artPlayerRef.current.setting.add({
-        name: 'subtitle-selector',
-        html: '字幕',
-        selector: subtitleOptions,
-        onSelect: function (item: any) {
-          if (artPlayerRef.current) {
-            if (item.url === '') {
-              artPlayerRef.current.subtitle.show = false;
-            } else {
-              artPlayerRef.current.subtitle.switch(item.url, {
-                name: item.html,
-              });
-              artPlayerRef.current.subtitle.show = true;
-            }
-          }
-          return item.html;
-        },
-      });
+      switchSubtitle(currentSubtitles[0].url, currentSubtitles[0].label);
     } else {
-      // 没有字幕时，隐藏字幕并移除字幕设置
       artPlayerRef.current.subtitle.show = false;
-      try {
-        artPlayerRef.current.setting.remove('subtitle-selector');
-      } catch (e) {
-        // 忽略错误，可能设置项不存在
-      }
+      currentSubtitleLabelRef.current = '关闭';
     }
+
+    updateSubtitleSetting();
   }, [detail, currentEpisodeIndex]);
 
   const getSourceSwitchResumeTime = async (
@@ -6167,6 +6270,7 @@ function PlayPageClient() {
         // 获取当前集的字幕
         const currentSubtitles = detailRef.current?.subtitles?.[currentEpisodeIndex] || [];
         const savedSubtitleSize = typeof window !== 'undefined' ? localStorage.getItem('subtitleSize') || '2em' : '2em';
+        currentSubtitleLabelRef.current = currentSubtitles[0]?.label || '关闭';
 
         artPlayerRef.current = new Artplayer({
           container: artRef.current!,
@@ -7298,40 +7402,8 @@ function PlayPageClient() {
 
           applyProgressThumbConfig();
 
-          // 添加字幕切换功能
-          const currentSubtitles = detailRef.current?.subtitles?.[currentEpisodeIndex] || [];
-          if (currentSubtitles.length > 0 && artPlayerRef.current) {
-            const subtitleOptions = [
-              {
-                html: '关闭',
-                url: '',
-              },
-              ...currentSubtitles.map((sub: any) => ({
-                html: sub.label,
-                url: sub.url,
-              })),
-            ];
-
-            artPlayerRef.current.setting.add({
-              html: '字幕',
-              selector: subtitleOptions,
-              onSelect: function (item: any) {
-                if (artPlayerRef.current) {
-                  if (item.url === '') {
-                    // 关闭字幕
-                    artPlayerRef.current.subtitle.show = false;
-                  } else {
-                    // 切换字幕
-                    artPlayerRef.current.subtitle.switch(item.url, {
-                      name: item.html,
-                    });
-                    artPlayerRef.current.subtitle.show = true;
-                  }
-                }
-                return item.html;
-              },
-            });
-          }
+          // 添加字幕切换和本地字幕上传功能
+          updateSubtitleSetting();
 
           // 添加字幕大小设置
           if (artPlayerRef.current) {
@@ -9918,6 +9990,14 @@ function PlayPageClient() {
 
       {/* Toast通知 */}
       {toast && <Toast {...toast} />}
+
+      <input
+        ref={customSubtitleInputRef}
+        type='file'
+        accept={CUSTOM_SUBTITLE_ACCEPT}
+        className='hidden'
+        onChange={handleCustomSubtitleFileChange}
+      />
 
       {/* 下载选集面板 */}
       <DownloadEpisodeSelector
