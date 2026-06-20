@@ -385,6 +385,7 @@ interface SiteConfig {
   MagnetMikanReverseProxy?: string;
   MagnetDmhyReverseProxy?: string;
   MagnetAcgripReverseProxy?: string;
+  MagnetNyaaReverseProxy?: string;
   EnableComments: boolean;
   EnableRegistration?: boolean;
   RequireRegistrationInviteCode?: boolean;
@@ -10151,6 +10152,7 @@ const SiteConfigComponent = ({
     MagnetMikanReverseProxy: '',
     MagnetDmhyReverseProxy: '',
     MagnetAcgripReverseProxy: '',
+    MagnetNyaaReverseProxy: '',
     EnableComments: false,
     EnableRegistration: false,
     RegistrationRequireTurnstile: false,
@@ -10273,6 +10275,7 @@ const SiteConfigComponent = ({
         MagnetDmhyReverseProxy: config.SiteConfig.MagnetDmhyReverseProxy || '',
         MagnetAcgripReverseProxy:
           config.SiteConfig.MagnetAcgripReverseProxy || '',
+        MagnetNyaaReverseProxy: config.SiteConfig.MagnetNyaaReverseProxy || '',
         EnableComments: config.SiteConfig.EnableComments || false,
       });
     }
@@ -11276,6 +11279,27 @@ const SiteConfigComponent = ({
             />
             <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
               配置后将使用该地址替代默认的 ACG.RIP 域名进行请求。
+            </p>
+          </div>
+
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              Nyaa 反代代理
+            </label>
+            <input
+              type='text'
+              placeholder='请输入 Nyaa 反代 Base URL（可选）'
+              value={siteSettings.MagnetNyaaReverseProxy || ''}
+              onChange={(e) =>
+                setSiteSettings((prev) => ({
+                  ...prev,
+                  MagnetNyaaReverseProxy: e.target.value,
+                }))
+              }
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            />
+            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+              配置后将使用该地址替代默认的 Nyaa 域名进行请求。
             </p>
           </div>
         </div>

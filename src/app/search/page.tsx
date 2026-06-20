@@ -1775,6 +1775,12 @@ function SearchPageClient() {
           {activeTab === 'pansou' &&
             netdiskSearchEnabled &&
             renderPansouCloudTypeFilter()}
+
+          {activeTab === 'acg' && magnetSearchEnabled && (
+            <div className='mt-4'>
+              <AcgSearch keyword={searchQuery} controlsOnly />
+            </div>
+          )}
         </div>
 
         {pansouCloudFilterOpen &&
@@ -2162,6 +2168,7 @@ function SearchPageClient() {
                   <AcgSearch
                     keyword={searchQuery}
                     triggerSearch={triggerAcgSearch}
+                    showSourceSwitch={false}
                   />
                 </>
               )}
